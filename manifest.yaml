@@ -1,0 +1,10 @@
+name: recall
+display_name: Recall
+description: Long-term bot memory — store and retrieve approved knowledge
+category: Memory
+icon: database
+color: purple
+version: "1.0"
+database: true
+
+credentials: []
