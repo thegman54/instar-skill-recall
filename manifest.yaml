@@ -8,3 +8,31 @@ version: "1.0"
 database: true
 
 credentials: []
+
+admin:
+  type: review
+  label: "Review Entries"
+  list_endpoint: /recall
+  update_endpoint: /recall/{id}
+  columns:
+    - field: content
+      label: Content
+      truncate: 200
+    - field: source
+      label: Source
+    - field: reason
+      label: Reason
+      truncate: 100
+    - field: created_at
+      label: Created
+      format: date
+  statuses:
+    - value: pending
+      label: Pending
+      actions: [approve, reject]
+    - value: approved
+      label: Approved
+      actions: [reject]
+    - value: rejected
+      label: Rejected
+      actions: [approve]
