@@ -1,28 +1,32 @@
 name: recall
 display_name: Recall
-description: Long-term bot memory — store and retrieve approved knowledge
+description: Bot memory — ephemeral session notes, plus owner- and per-speaker memories with an approval workflow
 category: Memory
 icon: database
 color: purple
-version: "1.0"
+version: "1.1"
 database: true
 
 credentials: []
 
 admin:
   type: review
-  label: "Review Entries"
+  label: "Review Memories"
   list_endpoint: /recall
   update_endpoint: /recall/{id}
   columns:
+    - field: scope
+      label: Scope
+    - field: speaker_label
+      label: Speaker
     - field: content
       label: Content
       truncate: 200
-    - field: source
-      label: Source
     - field: reason
       label: Reason
       truncate: 100
+    - field: source_interface
+      label: Via
     - field: created_at
       label: Created
       format: date
@@ -36,3 +40,6 @@ admin:
     - value: rejected
       label: Rejected
       actions: [approve]
+    - value: session
+      label: Session (ephemeral)
+      actions: [approve, reject]

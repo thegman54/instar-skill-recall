@@ -1,21 +1,28 @@
 """
-recall_read — bot queries its approved long-term memories.
+recall_read — recall what you know: the owner's memories, this speaker's memories, and the
+notes you jotted in the current conversation.
 
-Only returns entries that have been approved by the bot owner.
-Supports filtering by tags and limiting result count.
+Returns three kinds of memory, each tagged with its scope so you know what you're looking at:
+  - owner:   approved facts/preferences about the owner (apply in every conversation)
+  - speaker: approved things about the PERSON you're currently talking to (from their past
+             visits) — resolved from the authenticated session, so it's really them
+  - session: ephemeral notes you wrote this conversation via recall_write
+
+Check this at the start of a conversation with someone, and whenever you need to recall context.
 """
 
 import structlog
 
 from ..base import BaseTool, ToolResult
 from ..registry import register_tool
+from ._speaker import resolve_speaker
 
 log = structlog.get_logger()
 
 
 @register_tool
 class RecallReadTool(BaseTool):
-    """Query approved recall entries."""
+    """Query memory in scope: owner (approved) + this speaker (approved) + this session (notes)."""
 
     @property
     def name(self) -> str:
@@ -24,10 +31,14 @@ class RecallReadTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Search your approved long-term memories. "
-            "Returns entries that you previously submitted via recall_write "
-            "and that the bot owner approved. "
-            "Filter by tags or search term, sorted by most recent first."
+            "Recall what you know. Returns your memories in three scopes, each labelled: "
+            "'owner' (approved facts about the owner), 'speaker' (approved memories about the "
+            "specific person you're talking to right now — so you can pick up where you left off "
+            "with them), and 'session' (the ephemeral notes you made this conversation via "
+            "recall_write). "
+            "The speaker is identified from the authenticated session, so speaker memories are "
+            "only ever this person's. Good to call at the start of a conversation and whenever "
+            "you need to remember something. Optionally filter by search text or tags."
         )
 
     @property
@@ -42,11 +53,17 @@ class RecallReadTool(BaseTool):
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Filter by tags (returns entries matching ANY of the given tags).",
+                    "description": "Filter to entries matching ANY of these tags. Optional.",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["all", "owner", "speaker", "session"],
+                    "description": "Limit to one scope. Default 'all' (owner + this speaker + this session).",
+                    "default": "all",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of entries to return. Default 20, max 100.",
+                    "description": "Max entries to return. Default 20, max 100.",
                     "default": 20,
                 },
             },
@@ -56,8 +73,7 @@ class RecallReadTool(BaseTool):
     def credential_keys(self) -> list[str]:
         return []
 
-    async def execute(self, query: str = "", tags: list[str] = None, limit: int = 20, **kwargs) -> ToolResult:
-        """Query approved recall entries."""
+    async def execute(self, query: str = "", tags: list[str] = None, scope: str = "all", limit: int = 20, **kwargs) -> ToolResult:
         from ...db import get_pool
 
         pool = get_pool()
@@ -66,74 +82,59 @@ class RecallReadTool(BaseTool):
 
         limit = min(max(1, limit), 100)
         tags = tags or []
+        scope = scope if scope in ("all", "owner", "speaker", "session") else "all"
+        who = await resolve_speaker(self)
+
+        # Which scopes to include, and their visibility predicates.
+        scope_clauses = []
+        params = []
+
+        def _p(v):
+            params.append(v)
+            return f"${len(params)}"
+
+        if scope in ("all", "owner"):
+            scope_clauses.append("(scope = 'owner' AND status = 'approved')")
+        if scope in ("all", "speaker") and who["speaker_id"]:
+            scope_clauses.append(f"(scope = 'speaker' AND status = 'approved' AND speaker_id = {_p(who['speaker_id'])})")
+        if scope in ("all", "session") and who["session_id"]:
+            scope_clauses.append(f"(scope = 'session' AND status = 'session' AND session_id = {_p(who['session_id'])})")
+
+        if not scope_clauses:
+            return ToolResult.ok({"count": 0, "entries": [], "speaker": who["speaker_label"]})
+
+        where = "(" + " OR ".join(scope_clauses) + ")"
+        if query:
+            where += f" AND (content ILIKE {_p(f'%{query}%')} OR source ILIKE ${len(params)} OR reason ILIKE ${len(params)})"
+        if tags:
+            where += f" AND tags && {_p(tags)}"
+
+        sql = (
+            "SELECT id, content, source, reason, tags, scope, speaker_label, created_at "
+            f"FROM recall_entries WHERE {where} "
+            f"ORDER BY (scope = 'session') DESC, created_at DESC LIMIT {_p(limit)}"
+        )
 
         try:
             async with pool.acquire() as conn:
-                if query and tags:
-                    rows = await conn.fetch(
-                        """
-                        SELECT id, content, source, reason, tags, created_at
-                        FROM recall_entries
-                        WHERE status = 'approved'
-                          AND (content ILIKE $1 OR source ILIKE $1 OR reason ILIKE $1)
-                          AND tags && $2
-                        ORDER BY created_at DESC
-                        LIMIT $3
-                        """,
-                        f"%{query}%", tags, limit,
-                    )
-                elif query:
-                    rows = await conn.fetch(
-                        """
-                        SELECT id, content, source, reason, tags, created_at
-                        FROM recall_entries
-                        WHERE status = 'approved'
-                          AND (content ILIKE $1 OR source ILIKE $1 OR reason ILIKE $1)
-                        ORDER BY created_at DESC
-                        LIMIT $2
-                        """,
-                        f"%{query}%", limit,
-                    )
-                elif tags:
-                    rows = await conn.fetch(
-                        """
-                        SELECT id, content, source, reason, tags, created_at
-                        FROM recall_entries
-                        WHERE status = 'approved'
-                          AND tags && $1
-                        ORDER BY created_at DESC
-                        LIMIT $2
-                        """,
-                        tags, limit,
-                    )
-                else:
-                    rows = await conn.fetch(
-                        """
-                        SELECT id, content, source, reason, tags, created_at
-                        FROM recall_entries
-                        WHERE status = 'approved'
-                        ORDER BY created_at DESC
-                        LIMIT $1
-                        """,
-                        limit,
-                    )
-
+                rows = await conn.fetch(sql, *params)
             entries = [
                 {
-                    "id": row['id'],
-                    "content": row['content'],
-                    "source": row['source'],
-                    "reason": row['reason'],
-                    "tags": row['tags'],
-                    "created_at": row['created_at'].isoformat(),
+                    "id": r["id"],
+                    "scope": r["scope"],
+                    "content": r["content"],
+                    "reason": r["reason"],
+                    "tags": r["tags"],
+                    "speaker": r["speaker_label"],
+                    "created_at": r["created_at"].isoformat(),
                 }
-                for row in rows
+                for r in rows
             ]
-
             return ToolResult.ok({
                 "count": len(entries),
+                "speaker": who["speaker_label"],
                 "entries": entries,
             })
         except Exception as e:
             log.error("recall_read_error", error=str(e))
-            return ToolResult.fail(f"Failed to query recall entries: {e}")
+            return ToolResult.fail(f"Failed to read memories: {e}")
