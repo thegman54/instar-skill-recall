@@ -8,7 +8,9 @@ Returns three kinds of memory, each tagged with its scope so you know what you'r
              visits) — resolved from the authenticated session, so it's really them
   - session: ephemeral notes you wrote this conversation via recall_write
 
-Check this at the start of a conversation with someone, and whenever you need to recall context.
+Call this at the START of every conversation, before the first substantive reply — the speaker is
+resolved server-side, so you never need to identify them first. Call again only when the topic
+moves somewhere the first read did not cover.
 """
 
 import structlog
@@ -31,14 +33,19 @@ class RecallReadTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Recall what you know. Returns your memories in three scopes, each labelled: "
-            "'owner' (approved facts about the owner), 'speaker' (approved memories about the "
+            "Recall what you know. CALL THIS AT THE START OF EVERY CONVERSATION, before your "
+            "first substantive reply — not only when you think you need it. You cannot know "
+            "whether you have relevant memory about someone until you look. "
+            "You do NOT need to work out who you are talking to first: the speaker is resolved "
+            "server-side from the authenticated session, so results come back already scoped to "
+            "the real person on the other end. "
+            "Returns your memories in three scopes, each labelled: 'owner' (approved facts about "
+            "the owner, which apply in every conversation), 'speaker' (approved memories about the "
             "specific person you're talking to right now — so you can pick up where you left off "
             "with them), and 'session' (the ephemeral notes you made this conversation via "
             "recall_write). "
-            "The speaker is identified from the authenticated session, so speaker memories are "
-            "only ever this person's. Good to call at the start of a conversation and whenever "
-            "you need to remember something. Optionally filter by search text or tags."
+            "Call it once up front; call it again only when the topic moves somewhere your first "
+            "read did not cover. Never announce the call. Optionally filter by search text or tags."
         )
 
     @property
